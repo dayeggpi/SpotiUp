@@ -32,8 +32,13 @@ pip install -r requirements.txt
 python main.py
 ```
 
+Then click connect (which should open a browser to login/approve the Spotify App <> API connection). Troubles connecting ? delete .cache file and try again.
+
 ## ToDo
 
 - [ ] Fix app icon in taskbar
 - [ ] Double check if API rate limiting is properly handled
 - [ ] Add ability to backup "by Spotify" playlists saved into user's playlists
+
+## GUI
+<img width="1202" height="832" alt="spotiup" src="https://github.com/user-attachments/assets/5e1ccafc-38ce-491e-93dd-28ccb2816703" />
