@@ -23,7 +23,7 @@ pip install -r requirements.txt
 
 - Go to Spotify Developer Dashboard
 - Create a new application
-- Note your Client ID and Client Secret
+- Note your Client ID and Client Secret (edit config.py accordingly)
 - Add http://localhost:8888/callback to the Redirect URIs
 
 ### 3. Run
