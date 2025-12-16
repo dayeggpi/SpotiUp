@@ -31,3 +31,9 @@ pip install -r requirements.txt
 ```bash
 python main.py
 ```
+
+## ToDo
+
+- [ ] Fix app icon in taskbar
+- [ ] Double check if API rate limiting is properly handled
+- [ ] Add ability to backup "by Spotify" playlists saved into user's playlists
