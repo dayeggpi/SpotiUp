@@ -336,7 +336,11 @@ class DataManager:
                 stats['tracks_removed'] += len(old_track_ids - new_track_ids)
                 stats['tracks_updated'] += len(new_track_ids & old_track_ids)
                 stats['playlists_updated'] += 1
-
+                
+                # Preserve local-only metadata (folder_path, custom fields)
+                if 'folder_path' in old_playlist and old_playlist['folder_path']:
+                    playlist_dict['folder_path'] = old_playlist['folder_path']
+                
                 # Update the playlist
                 existing_playlists[playlist_id] = playlist_dict
 
@@ -661,4 +665,5 @@ class DataManager:
         logs = logs[-100:]
         
         with open(log_file, 'w') as f:
+
             json.dump(logs, f, indent=2)
