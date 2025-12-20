@@ -43,23 +43,59 @@ def setup_windows_icon(assets_dir):
     return icon_png if os.path.exists(icon_png) else None
 
 
+def set_windows_taskbar_icon(icon_path):
+    """Set the taskbar icon using Windows API."""
+    if sys.platform != 'win32':
+        return
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        # Load the icon
+        IMAGE_ICON = 1
+        LR_LOADFROMFILE = 0x00000010
+        LR_DEFAULTSIZE = 0x00000040
+
+        # Convert to absolute path
+        icon_path = os.path.abspath(icon_path)
+
+        # Load the icon using Windows API
+        hicon = ctypes.windll.user32.LoadImageW(
+            None,
+            icon_path,
+            IMAGE_ICON,
+            0, 0,
+            LR_LOADFROMFILE | LR_DEFAULTSIZE
+        )
+
+        if hicon:
+            # Get the window handle (we'll set it later after window is created)
+            return hicon
+    except Exception as e:
+        print(f"Warning: Could not load icon via Windows API: {e}")
+
+    return None
+
+
 def main():
     """Main entry point."""
-    # Set Windows AppUserModelID FIRST
+    # CRITICAL: Set Windows AppUserModelID BEFORE QApplication
+    # This prevents Windows from grouping the app under python.exe
     if sys.platform == 'win32':
         try:
             import ctypes
-            # Change this ID to something unique each time you test
-            app_id = 'com.magik.spotiup'  # Changed ID
+            # Set unique AppUserModelID
+            app_id = 'DayEggPi.SpotiUp.MusicBackup.1'
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
-        except Exception:
-            pass
-    
+        except Exception as e:
+            print(f"Warning: Could not set AppUserModelID: {e}")
+
     # Enable high DPI scaling
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
-    
+
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("dayeggpi")
@@ -77,10 +113,14 @@ def main():
         # On Linux/Mac, PNG is fine
         icon_path = os.path.join(assets_dir, 'icon.png')
 
-    # Set application-wide icon
+    # Set application-wide icon (Qt level)
     if icon_path and os.path.exists(icon_path):
         app_icon = QIcon(icon_path)
         app.setWindowIcon(app_icon)
+
+        # For Windows: Also try to load via Windows API
+        if sys.platform == 'win32' and icon_path.endswith('.ico'):
+            set_windows_taskbar_icon(icon_path)
 
     # Create and show main window
     window = MainWindow()
@@ -88,6 +128,46 @@ def main():
     # Set icon on window explicitly (important for Windows taskbar)
     if icon_path and os.path.exists(icon_path):
         window.setWindowIcon(QIcon(icon_path))
+
+        # Windows-specific: Set icon using Windows API on the actual window
+        if sys.platform == 'win32' and icon_path.endswith('.ico'):
+            try:
+                import ctypes
+                from PyQt6.QtWidgets import QApplication
+
+                # Get window handle
+                hwnd = int(window.winId())
+
+                # Load icon via Windows API
+                IMAGE_ICON = 1
+                LR_LOADFROMFILE = 0x00000010
+                LR_DEFAULTSIZE = 0x00000040
+
+                icon_abs_path = os.path.abspath(icon_path)
+
+                # Load small and large icons
+                hicon_small = ctypes.windll.user32.LoadImageW(
+                    None, icon_abs_path, IMAGE_ICON,
+                    16, 16, LR_LOADFROMFILE
+                )
+                hicon_large = ctypes.windll.user32.LoadImageW(
+                    None, icon_abs_path, IMAGE_ICON,
+                    32, 32, LR_LOADFROMFILE
+                )
+
+                # Send icon messages to window
+                WM_SETICON = 0x0080
+                ICON_SMALL = 0
+                ICON_BIG = 1
+
+                if hicon_small:
+                    ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon_small)
+                if hicon_large:
+                    ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_large)
+
+                print("✓ Taskbar icon set via Windows API")
+            except Exception as e:
+                print(f"Note: Could not set icon via Windows API: {e}")
     
     window.show()
     

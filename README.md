@@ -26,7 +26,7 @@ pip install -r requirements.txt
 - Note your Client ID and Client Secret (edit config.py accordingly)
 - Add http://localhost:8888/callback to the Redirect URIs
 
-### 3. Windows Icon Setup (Optional)
+### 3. Windows Icon Setup (Optional but Recommended)
 
 For the icon to display properly in the Windows taskbar, you need to create an ICO file:
 
@@ -39,6 +39,8 @@ python create_icon.py
 # Use an online converter like https://convertio.co/png-ico/
 # Upload assets/icon.png and download as assets/icon.ico
 ```
+
+**Icon still not showing?** See [WINDOWS_ICON_TROUBLESHOOTING.md](WINDOWS_ICON_TROUBLESHOOTING.md) for solutions including clearing the Windows icon cache.
 
 ### 4. Run
 
