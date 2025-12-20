@@ -28,19 +28,17 @@ pip install -r requirements.txt
 
 ### 3. Windows Icon Setup (Optional but Recommended)
 
-For the icon to display properly in the Windows taskbar, you need to create an ICO file:
+**⚠️ Important for Windows users:** The icon won't show in the taskbar when running `python main.py` due to Windows limitations. See [**TASKBAR_ICON_SOLUTION.md**](TASKBAR_ICON_SOLUTION.md) for working solutions.
 
+**Quick fix - Build standalone EXE (recommended):**
 ```bash
-# Option 1: Install Pillow and run the icon generator
 pip install Pillow
 python create_icon.py
-
-# Option 2: Manually convert (if Pillow install fails)
-# Use an online converter like https://convertio.co/png-ico/
-# Upload assets/icon.png and download as assets/icon.ico
+python build_exe.py
+# Then run: dist\SpotiUp.exe
 ```
 
-**Icon still not showing?** See [WINDOWS_ICON_TROUBLESHOOTING.md](WINDOWS_ICON_TROUBLESHOOTING.md) for solutions including clearing the Windows icon cache.
+For other methods (VBS launcher, shortcuts, etc.), see the [complete guide](TASKBAR_ICON_SOLUTION.md).
 
 ### 4. Run
 

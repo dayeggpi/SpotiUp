@@ -30,6 +30,8 @@ PIPFILE.lock
 # PyInstaller
 *.manifest
 *.spec
+build/
+dist/
 
 # Unit test / coverage reports
 htmlcov/
