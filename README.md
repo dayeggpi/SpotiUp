@@ -38,7 +38,7 @@ Then click connect (which should open a browser to login/approve the Spotify App
 
 - [ ] Fix app icon in taskbar
 - [ ] Double check if API rate limiting is properly handled
-- [ ] Add ability to backup "by Spotify" playlists saved into user's playlists
+- [ ] ~Add ability to backup "by Spotify" playlists saved into user's playlists~ (seems Web API doesn't allow this anymore)
 
 ## GUI
 <img width="1202" height="832" alt="spotiup" src="https://github.com/user-attachments/assets/5e1ccafc-38ce-491e-93dd-28ccb2816703" />
