@@ -105,6 +105,21 @@ class PlaylistView(QWidget):
         filter_layout.addStretch()
         left_layout.addLayout(filter_layout)
         
+        # Selection controls
+        selection_layout = QHBoxLayout()
+        select_all_btn = QPushButton("Select All")
+        select_all_btn.setMaximumWidth(80)
+        select_all_btn.clicked.connect(self._select_all_playlists)
+        selection_layout.addWidget(select_all_btn)
+
+        deselect_all_btn = QPushButton("Deselect All")
+        deselect_all_btn.setMaximumWidth(90)
+        deselect_all_btn.clicked.connect(self._deselect_all_playlists)
+        selection_layout.addWidget(deselect_all_btn)
+
+        selection_layout.addStretch()
+        left_layout.addLayout(selection_layout)
+
         self.playlist_tree = QTreeWidget()
         self.playlist_tree.setHeaderHidden(True)
         self.playlist_tree.itemClicked.connect(self._on_playlist_selected)
@@ -114,7 +129,7 @@ class PlaylistView(QWidget):
         self.playlist_tree.setDragEnabled(True)
         self.playlist_tree.setAcceptDrops(True)
         self.playlist_tree.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-        
+
         left_layout.addWidget(self.playlist_tree)
         
         # Playlist count label
@@ -352,7 +367,7 @@ class PlaylistView(QWidget):
         owner_id = playlist.owner_id.lower()
         is_spotify = owner_id == 'spotify'
         is_mine = playlist.owner_id == user_id
-        
+
         if is_spotify:
             icon = "🎵"  # Spotify-created
         elif playlist.is_collaborative:
@@ -361,18 +376,22 @@ class PlaylistView(QWidget):
             icon = "📋" if playlist.is_public else "🔒"
         else:
             icon = "📌"  # Followed playlist
-        
+
         item = QTreeWidgetItem([f"{icon} {playlist.name}"])
         item.setData(0, Qt.ItemDataRole.UserRole, ('playlist', playlist))
-        
+
+        # Make the item checkable
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        item.setCheckState(0, Qt.CheckState.Unchecked)
+
         owner_info = f"by {playlist.owner_name}"
         if is_spotify:
             owner_info = "by Spotify"
         elif is_mine:
             owner_info = "by You"
-        
+
         item.setToolTip(
-            0, 
+            0,
             f"{playlist.name}\n"
             f"{playlist.track_count} tracks • {playlist.total_duration_formatted}\n"
             f"{owner_info}"
@@ -988,3 +1007,45 @@ class PlaylistView(QWidget):
     def refresh(self):
         """Refresh the view."""
         self.load_data()
+
+    def _select_all_playlists(self):
+        """Select all playlists in the tree."""
+        self._set_all_playlists_check_state(Qt.CheckState.Checked)
+
+    def _deselect_all_playlists(self):
+        """Deselect all playlists in the tree."""
+        self._set_all_playlists_check_state(Qt.CheckState.Unchecked)
+
+    def _set_all_playlists_check_state(self, state: Qt.CheckState):
+        """Set the check state for all playlist items."""
+        def set_check_state_recursive(item: QTreeWidgetItem):
+            data = item.data(0, Qt.ItemDataRole.UserRole)
+            if data:
+                item_type, obj = data
+                if item_type == 'playlist':
+                    item.setCheckState(0, state)
+
+            for i in range(item.childCount()):
+                set_check_state_recursive(item.child(i))
+
+        for i in range(self.playlist_tree.topLevelItemCount()):
+            set_check_state_recursive(self.playlist_tree.topLevelItem(i))
+
+    def get_selected_playlists(self) -> List[Playlist]:
+        """Get a list of all checked playlists."""
+        selected = []
+
+        def find_checked_playlists(item: QTreeWidgetItem):
+            data = item.data(0, Qt.ItemDataRole.UserRole)
+            if data:
+                item_type, obj = data
+                if item_type == 'playlist' and item.checkState(0) == Qt.CheckState.Checked:
+                    selected.append(obj)
+
+            for i in range(item.childCount()):
+                find_checked_playlists(item.child(i))
+
+        for i in range(self.playlist_tree.topLevelItemCount()):
+            find_checked_playlists(self.playlist_tree.topLevelItem(i))
+
+        return selected
