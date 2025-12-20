@@ -26,7 +26,21 @@ pip install -r requirements.txt
 - Note your Client ID and Client Secret (edit config.py accordingly)
 - Add http://localhost:8888/callback to the Redirect URIs
 
-### 3. Run
+### 3. Windows Icon Setup (Optional)
+
+For the icon to display properly in the Windows taskbar, you need to create an ICO file:
+
+```bash
+# Option 1: Install Pillow and run the icon generator
+pip install Pillow
+python create_icon.py
+
+# Option 2: Manually convert (if Pillow install fails)
+# Use an online converter like https://convertio.co/png-ico/
+# Upload assets/icon.png and download as assets/icon.ico
+```
+
+### 4. Run
 
 ```bash
 python main.py
@@ -36,7 +50,7 @@ Then click connect (which should open a browser to login/approve the Spotify App
 
 ## ToDo
 
-- [ ] Fix app icon in taskbar
+- [x] Fix app icon in taskbar (run `create_icon.py` to generate proper ICO file)
 - [ ] Double check if API rate limiting is properly handled
 - [ ] ~Add ability to backup "by Spotify" playlists saved into user's playlists~ (seems Web API doesn't allow this anymore)
 
