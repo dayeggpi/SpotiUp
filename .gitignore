@@ -73,3 +73,6 @@ SpotifyBackup/
 # Spotify credentials cache
 .cache-*
 .spotify_caches/
+
+# Generated icon file (created at runtime from PNG)
+assets/icon.ico
