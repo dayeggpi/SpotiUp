@@ -287,7 +287,85 @@ class DataManager:
         self._save_update_log(stats)
         
         return stats
-    
+
+    def update_selected_playlists(self, refreshed_playlists: List) -> Dict[str, Any]:
+        """
+        Update only selected playlists in the backup.
+
+        Args:
+            refreshed_playlists: List of refreshed Playlist objects
+
+        Returns:
+            Dictionary with update statistics
+        """
+        stats = {
+            'playlists_updated': 0,
+            'tracks_added': 0,
+            'tracks_removed': 0,
+            'tracks_updated': 0,
+        }
+
+        # Load existing data
+        existing_data = self.load_backup()
+        if not existing_data:
+            # No existing data, can't update
+            return stats
+
+        existing_playlists = {
+            p['playlist_id']: p for p in existing_data.get('playlists', [])
+        }
+
+        # Update the refreshed playlists
+        for playlist in refreshed_playlists:
+            # Convert to dict if needed
+            if isinstance(playlist, Playlist):
+                playlist_dict = playlist.to_dict()
+            else:
+                playlist_dict = playlist
+
+            playlist_id = playlist_dict.get('playlist_id', '')
+
+            if playlist_id in existing_playlists:
+                old_playlist = existing_playlists[playlist_id]
+
+                # Calculate track changes
+                old_track_ids = {t.get('track_id', '') for t in old_playlist.get('tracks', [])}
+                new_track_ids = {t.get('track_id', '') for t in playlist_dict.get('tracks', [])}
+
+                stats['tracks_added'] += len(new_track_ids - old_track_ids)
+                stats['tracks_removed'] += len(old_track_ids - new_track_ids)
+                stats['tracks_updated'] += len(new_track_ids & old_track_ids)
+                stats['playlists_updated'] += 1
+
+                # Update the playlist
+                existing_playlists[playlist_id] = playlist_dict
+
+        # Rebuild the playlists list maintaining order
+        updated_playlists = []
+        for p in existing_data.get('playlists', []):
+            playlist_id = p.get('playlist_id', '')
+            if playlist_id in existing_playlists:
+                updated_playlists.append(existing_playlists[playlist_id])
+            else:
+                updated_playlists.append(p)
+
+        # Save updated data
+        existing_data['playlists'] = updated_playlists
+        existing_data['exported_at'] = datetime.utcnow().isoformat() + 'Z'
+        existing_data['total_tracks'] = sum(
+            len(p.get('tracks', [])) for p in updated_playlists
+        )
+
+        self._save_json(self.main_backup_file, existing_data)
+
+        # Create history entry
+        self._save_update_log({
+            'type': 'selective_refresh',
+            **stats
+        })
+
+        return stats
+
     def save_folders(self, folders: List[PlaylistFolder]):
         """Save folder organization."""
         folders_data = {

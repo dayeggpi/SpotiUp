@@ -740,6 +740,100 @@ class SpotifyClient:
         with open(partial_backup_file, 'w') as f:
             json.dump(data, f, indent=2)
     
+    def refresh_selected_playlists(self, playlist_data: List[Dict[str, str]],
+                                   fetch_genres: bool = False) -> Dict[str, Any]:
+        """
+        Refresh only selected playlists.
+
+        Args:
+            playlist_data: List of dicts with 'id' and 'name' keys
+            fetch_genres: Whether to fetch genre info
+
+        Returns:
+            Dictionary with refreshed playlists
+        """
+        if not self.is_authenticated():
+            self._report_progress("Not authenticated!")
+            return {}
+
+        if self.is_rate_limited():
+            self._report_progress(f"⚠️ Currently rate limited. Available at: {self.rate_limit_info.available_at_formatted}")
+            return {'rate_limited': True, 'rate_limit_info': self.get_rate_limit_status()}
+
+        user_info = self.get_user_info()
+        self._report_progress(f"Refreshing {len(playlist_data)} selected playlist(s)...")
+
+        refreshed_playlists: List[Playlist] = []
+        total_playlists = len(playlist_data)
+
+        for i, p_data in enumerate(playlist_data):
+            playlist_id = p_data['id']
+            playlist_name = p_data['name']
+
+            self._report_progress(
+                f"Fetching playlist {i+1}/{total_playlists}: {playlist_name}",
+                i + 1,
+                total_playlists
+            )
+
+            # Fetch playlist metadata
+            try:
+                playlist_info = self.sp.playlist(playlist_id)
+                playlist = Playlist.from_spotify_playlist(playlist_info)
+
+                # Fetch all tracks for this playlist
+                tracks, completed, _ = self.get_playlist_tracks(
+                    playlist_id,
+                    playlist_name,
+                    fetch_genres,
+                    start_offset=0
+                )
+
+                if not completed:
+                    # Rate limited
+                    self._report_progress(
+                        f"⚠️ Refresh interrupted (rate limited). "
+                        f"Available at: {self.rate_limit_info.available_at_formatted}"
+                    )
+                    return {
+                        'rate_limited': True,
+                        'rate_limit_info': self.get_rate_limit_status(),
+                        'partial': True,
+                        'playlists_completed': i,
+                        'playlists_total': total_playlists
+                    }
+
+                playlist.tracks = tracks
+                playlist.last_synced = datetime.utcnow().isoformat() + 'Z'
+                refreshed_playlists.append(playlist)
+
+                self._report_progress(
+                    f"Playlist '{playlist_name}': {len(tracks)} tracks fetched",
+                    i + 1,
+                    total_playlists
+                )
+
+            except Exception as e:
+                if self._handle_spotify_error(e, f"refreshing playlist {playlist_name}"):
+                    return {
+                        'rate_limited': True,
+                        'rate_limit_info': self.get_rate_limit_status()
+                    }
+                self._report_progress(f"Error refreshing playlist {playlist_name}: {str(e)}")
+                continue
+
+        self._report_progress(f"Refresh complete! {len(refreshed_playlists)} playlist(s) updated")
+
+        return {
+            'user': {
+                'id': user_info.get('id'),
+                'display_name': user_info.get('display_name'),
+                'email': user_info.get('email'),
+            },
+            'playlists': refreshed_playlists,
+            'refreshed_at': datetime.utcnow().isoformat() + 'Z'
+        }
+
     def get_playlist_snapshot_ids(self) -> Dict[str, str]:
         """Get snapshot IDs for all playlists (for incremental updates)."""
         if not self.is_authenticated():

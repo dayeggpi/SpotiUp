@@ -76,6 +76,50 @@ class BackupWorker(QThread):
 
 
 
+class SelectiveRefreshWorker(QThread):
+    """Worker thread for selective playlist refresh operations."""
+
+    progress = pyqtSignal(str, int, int)
+    finished = pyqtSignal(dict)
+    error = pyqtSignal(str)
+    rate_limited = pyqtSignal(dict)
+
+    def __init__(self, client: SpotifyClient, playlist_ids: list,
+                 fetch_genres: bool = False):
+        super().__init__()
+        self.client = client
+        self.playlist_ids = playlist_ids
+        self.fetch_genres = fetch_genres
+        self._cancelled = False
+
+    def run(self):
+        try:
+            self.client.progress_callback = self._report_progress
+            data = self.client.refresh_selected_playlists(
+                self.playlist_ids,
+                self.fetch_genres
+            )
+
+            if self._cancelled:
+                return
+
+            # Check if rate limited
+            if data.get('rate_limited'):
+                self.rate_limited.emit(data)
+            else:
+                self.finished.emit(data)
+        except Exception as e:
+            import traceback
+            self.error.emit(f"{str(e)}\n\n{traceback.format_exc()}")
+
+    def _report_progress(self, message: str, current: int, total: int):
+        if not self._cancelled:
+            self.progress.emit(message, current, total)
+
+    def cancel(self):
+        self._cancelled = True
+
+
 class MainWindow(QMainWindow):
     """Main application window."""
 
@@ -393,7 +437,12 @@ class MainWindow(QMainWindow):
         update_action.setShortcut("Ctrl+U")
         update_action.triggered.connect(self._do_incremental_update)
         file_menu.addAction(update_action)
-        
+
+        refresh_selected_action = QAction("Refresh Selected Playlists", self)
+        refresh_selected_action.setShortcut("Ctrl+R")
+        refresh_selected_action.triggered.connect(self._do_selective_refresh)
+        file_menu.addAction(refresh_selected_action)
+
         file_menu.addSeparator()
         
         export_csv_action = QAction("Export to CSV", self)
@@ -455,7 +504,11 @@ class MainWindow(QMainWindow):
         update_btn = QPushButton("Update")
         update_btn.clicked.connect(self._do_incremental_update)
         toolbar.addWidget(update_btn)
-        
+
+        refresh_selected_btn = QPushButton("Refresh Selected")
+        refresh_selected_btn.clicked.connect(self._do_selective_refresh)
+        toolbar.addWidget(refresh_selected_btn)
+
         toolbar.addSeparator()
         
         refresh_btn = QPushButton("Refresh")
@@ -735,7 +788,100 @@ class MainWindow(QMainWindow):
         result_dialog.exec()
         
         self.statusbar.showMessage("Update complete")
-    
+
+    def _do_selective_refresh(self):
+        """Refresh only selected playlists."""
+        if not self.spotify_client.is_authenticated():
+            QMessageBox.warning(
+                self, "Not Connected",
+                "Please connect to Spotify first."
+            )
+            return
+
+        # Check for rate limiting
+        if self.spotify_client.is_rate_limited():
+            info = self.spotify_client.get_rate_limit_status()
+            QMessageBox.warning(
+                self, "Rate Limited",
+                f"Currently rate limited by Spotify.\n\n"
+                f"Available at: {info['available_at']}\n\n"
+                f"Please try again later."
+            )
+            return
+
+        # Get selected playlists
+        selected_playlists = self.playlist_view.get_selected_playlists()
+
+        if not selected_playlists:
+            QMessageBox.information(
+                self, "No Playlists Selected",
+                "Please select one or more playlists to refresh by checking the boxes next to them."
+            )
+            return
+
+        # Confirm refresh
+        reply = QMessageBox.question(
+            self, "Refresh Selected Playlists",
+            f"Refresh {len(selected_playlists)} selected playlist(s)?\n\n"
+            f"This will fetch fresh data from Spotify and update your local backup.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        progress_dialog = ProgressDialog(self, "Refreshing Selected Playlists")
+
+        # Extract playlist IDs and metadata
+        playlist_data = [
+            {'id': p.playlist_id, 'name': p.name}
+            for p in selected_playlists
+        ]
+
+        self._refresh_worker = SelectiveRefreshWorker(
+            self.spotify_client,
+            playlist_data,
+            self._settings.get('fetch_genres', False)
+        )
+
+        self._refresh_worker.progress.connect(progress_dialog.update_progress)
+        self._refresh_worker.finished.connect(
+            lambda data: self._on_selective_refresh_finished(data, progress_dialog)
+        )
+        self._refresh_worker.error.connect(
+            lambda err: self._on_backup_error(err, progress_dialog)
+        )
+        self._refresh_worker.rate_limited.connect(
+            lambda data: self._on_rate_limited(data, progress_dialog)
+        )
+
+        progress_dialog.rejected.connect(self._refresh_worker.cancel)
+
+        self._refresh_worker.start()
+        progress_dialog.exec()
+
+    def _on_selective_refresh_finished(self, data: Dict[str, Any], dialog: ProgressDialog):
+        """Handle selective refresh completion."""
+        dialog.accept()
+
+        refreshed_playlists = data.get('playlists', [])
+
+        # Update the backup with refreshed playlists
+        update_stats = self.data_manager.update_selected_playlists(refreshed_playlists)
+
+        # Reload the view
+        self.playlist_view.load_data()
+
+        QMessageBox.information(
+            self, "Refresh Complete",
+            f"Successfully refreshed {len(refreshed_playlists)} playlist(s).\n\n"
+            f"Tracks updated: {update_stats.get('tracks_updated', 0)}\n"
+            f"Tracks added: {update_stats.get('tracks_added', 0)}\n"
+            f"Tracks removed: {update_stats.get('tracks_removed', 0)}"
+        )
+
+        self.statusbar.showMessage(f"Refreshed {len(refreshed_playlists)} playlist(s)")
+
     def _export_to_csv(self):
         """Export data to CSV."""
         file_path, _ = QFileDialog.getSaveFileName(
