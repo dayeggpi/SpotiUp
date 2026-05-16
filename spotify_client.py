@@ -864,7 +864,136 @@ class SpotifyClient:
                     break
         
         return snapshots
-    
+
+    def fetch_delta_data(
+        self,
+        stored_playlists: Dict[str, Dict],
+        stored_liked_total: int = -1,
+        fetch_genres: bool = False,
+        include_spotify_playlists: bool = True,
+        include_collab_playlists: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Fetch only playlists whose snapshot_id or track count changed.
+
+        stored_playlists: pid -> {'snapshot_id': str, 'total_tracks': int}
+        stored_liked_total: track count from last backup (-1 = always fetch)
+        """
+        if not self.is_authenticated():
+            return {}
+
+        if self.is_rate_limited():
+            return {'rate_limited': True, 'rate_limit_info': self.get_rate_limit_status()}
+
+        self._report_progress("Checking playlists for changes...", 0, 0)
+
+        # Step 1: lightweight metadata pass (no tracks)
+        all_metadata: List[Playlist] = []
+        offset = 0
+        limit = 50
+
+        while True:
+            try:
+                results = self.sp.current_user_playlists(limit=limit, offset=offset)
+                if not results or not results.get('items'):
+                    break
+
+                for item in results['items']:
+                    if not item:
+                        continue
+                    if not include_spotify_playlists and item.get('owner', {}).get('id') == 'spotify':
+                        continue
+                    if not include_collab_playlists and item.get('collaborative', False):
+                        continue
+                    all_metadata.append(Playlist.from_spotify_playlist(item))
+
+                if results.get('next') is None:
+                    break
+                offset += limit
+                time.sleep(0.1)
+
+            except Exception as e:
+                if self._handle_spotify_error(e, "fetching playlist metadata"):
+                    break
+
+        if self.is_rate_limited():
+            return {'rate_limited': True, 'rate_limit_info': self.get_rate_limit_status()}
+
+        # Step 2: identify changed / new playlists
+        all_current_ids = [p.playlist_id for p in all_metadata]
+        changed_meta = []
+
+        for p in all_metadata:
+            stored = stored_playlists.get(p.playlist_id, {})
+            if (p.snapshot_id != stored.get('snapshot_id', '') or
+                    p.total_tracks != stored.get('total_tracks', -1)):
+                changed_meta.append(p)
+
+        n_changed = len(changed_meta)
+        n_total = len(all_metadata)
+        self._report_progress(
+            f"{n_changed} of {n_total} playlists changed — fetching tracks for changed only",
+            0, n_changed
+        )
+
+        # Step 3: fetch tracks only for changed playlists
+        changed_playlists: List[Playlist] = []
+
+        for i, playlist in enumerate(changed_meta):
+            if self.is_rate_limited():
+                return {'rate_limited': True, 'rate_limit_info': self.get_rate_limit_status()}
+
+            self._report_progress(
+                f"Fetching: {playlist.name} ({i + 1}/{n_changed})",
+                i + 1, n_changed
+            )
+
+            tracks, completed, _ = self.get_playlist_tracks(
+                playlist.playlist_id, playlist.name, fetch_genres
+            )
+
+            if not completed:
+                return {'rate_limited': True, 'rate_limit_info': self.get_rate_limit_status()}
+
+            playlist.tracks = tracks
+            playlist.last_synced = datetime.utcnow().isoformat() + 'Z'
+            changed_playlists.append(playlist)
+            time.sleep(0.2)
+
+        # Step 4: check liked songs count before fetching
+        liked_songs = None
+        try:
+            result = self.sp.current_user_saved_tracks(limit=1)
+            current_liked_total = result.get('total', 0) if result else 0
+        except Exception:
+            current_liked_total = stored_liked_total
+
+        if current_liked_total != stored_liked_total:
+            self._report_progress(
+                f"Liked songs changed ({stored_liked_total} → {current_liked_total}), fetching...",
+                0, 0
+            )
+            liked_songs, completed, _ = self.get_liked_songs(fetch_genres)
+            if not completed:
+                return {'rate_limited': True, 'rate_limit_info': self.get_rate_limit_status()}
+        else:
+            self._report_progress(
+                f"Liked songs unchanged ({current_liked_total} tracks), skipping",
+                0, 0
+            )
+
+        self._report_progress(
+            f"Delta sync done: {n_changed} playlist(s) updated, {n_total - n_changed} unchanged",
+            n_changed, n_changed
+        )
+
+        return {
+            'changed_playlists': changed_playlists,
+            'all_current_ids': all_current_ids,
+            'all_metadata': {p.playlist_id: p for p in all_metadata},
+            'liked_songs': liked_songs,
+        }
+
     def can_resume_backup(self) -> bool:
         """Check if there's an interrupted backup that can be resumed."""
         return self.backup_progress.load() and self.backup_progress.has_pending_work()

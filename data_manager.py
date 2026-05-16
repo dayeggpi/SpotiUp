@@ -288,6 +288,114 @@ class DataManager:
         
         return stats
 
+    def apply_delta_update(
+        self,
+        changed_playlists: List,
+        all_current_ids: List[str],
+        all_metadata: Dict,
+        liked_songs=None,
+    ) -> Dict[str, Any]:
+        """
+        Merge a delta sync result into the stored backup.
+
+        changed_playlists: Playlist objects with fresh tracks (only changed ones).
+        all_current_ids: all playlist IDs currently on Spotify (ordered).
+        all_metadata: pid -> Playlist for lightweight metadata of every playlist.
+        liked_songs: fresh LikedSongs if changed, else None (preserve stored).
+        """
+        stats = {
+            'playlists_added': 0,
+            'playlists_updated': 0,
+            'playlists_removed': 0,
+            'playlists_unchanged': 0,
+            'tracks_added': 0,
+            'tracks_removed': 0,
+        }
+
+        existing_data = self.load_backup()
+        if not existing_data:
+            self.save_full_backup({'playlists': changed_playlists, 'liked_songs': liked_songs})
+            stats['playlists_added'] = len(changed_playlists)
+            return stats
+
+        existing_playlists = {
+            p['playlist_id']: p for p in existing_data.get('playlists', [])
+        }
+
+        changed_by_id: Dict[str, dict] = {}
+        for p in changed_playlists:
+            p_dict = p.to_dict() if isinstance(p, Playlist) else p
+            changed_by_id[p_dict['playlist_id']] = p_dict
+
+        merged = []
+        current_ids_set = set(all_current_ids)
+
+        for pid in all_current_ids:
+            if pid in changed_by_id:
+                new_dict = changed_by_id[pid]
+                if pid in existing_playlists:
+                    old_dict = existing_playlists[pid]
+                    old_ids = {t.get('track_id', '') for t in old_dict.get('tracks', [])}
+                    new_ids = {t.get('track_id', '') for t in new_dict.get('tracks', [])}
+                    stats['tracks_added'] += len(new_ids - old_ids)
+                    stats['tracks_removed'] += len(old_ids - new_ids)
+                    stats['playlists_updated'] += 1
+                    if old_dict.get('folder_path'):
+                        new_dict['folder_path'] = old_dict['folder_path']
+                else:
+                    stats['playlists_added'] += 1
+                    stats['tracks_added'] += len(new_dict.get('tracks', []))
+                merged.append(new_dict)
+            elif pid in existing_playlists:
+                existing = dict(existing_playlists[pid])
+                if pid in all_metadata:
+                    meta = all_metadata[pid]
+                    meta_dict = meta.to_dict() if isinstance(meta, Playlist) else meta
+                    for field in ('name', 'snapshot_id', 'total_tracks', 'description',
+                                  'is_public', 'is_collaborative', 'images', 'external_urls'):
+                        if field in meta_dict:
+                            existing[field] = meta_dict[field]
+                stats['playlists_unchanged'] += 1
+                merged.append(existing)
+
+        for pid in existing_playlists:
+            if pid not in current_ids_set:
+                stats['playlists_removed'] += 1
+                stats['tracks_removed'] += len(existing_playlists[pid].get('tracks', []))
+
+        existing_data['playlists'] = merged
+        existing_data['exported_at'] = datetime.utcnow().isoformat() + 'Z'
+        existing_data['playlist_count'] = len(merged)
+        existing_data['total_tracks'] = sum(len(p.get('tracks', [])) for p in merged)
+
+        self._save_json(self.main_backup_file, existing_data)
+
+        if liked_songs is not None:
+            existing_liked = existing_data.get('liked_songs', {})
+            if isinstance(existing_liked, dict):
+                old_liked_ids = {t.get('track_id', '') for t in existing_liked.get('tracks', [])}
+            else:
+                old_liked_ids = set()
+
+            if isinstance(liked_songs, LikedSongs):
+                new_liked_ids = {t.track_id for t in liked_songs.tracks}
+                liked_dict = liked_songs.to_dict()
+            else:
+                new_liked_ids = {t.get('track_id', '') for t in liked_songs.get('tracks', [])}
+                liked_dict = liked_songs
+
+            stats['tracks_added'] += len(new_liked_ids - old_liked_ids)
+            stats['tracks_removed'] += len(old_liked_ids - new_liked_ids)
+
+            self._save_json(self.liked_songs_file, {
+                'version': '1.0',
+                'exported_at': datetime.utcnow().isoformat() + 'Z',
+                'liked_songs': liked_dict,
+            })
+
+        self._save_update_log({'type': 'delta_sync', **stats})
+        return stats
+
     def update_selected_playlists(self, refreshed_playlists: List) -> Dict[str, Any]:
         """
         Update only selected playlists in the backup.
@@ -336,11 +444,11 @@ class DataManager:
                 stats['tracks_removed'] += len(old_track_ids - new_track_ids)
                 stats['tracks_updated'] += len(new_track_ids & old_track_ids)
                 stats['playlists_updated'] += 1
-                
+
                 # Preserve local-only metadata (folder_path, custom fields)
                 if 'folder_path' in old_playlist and old_playlist['folder_path']:
                     playlist_dict['folder_path'] = old_playlist['folder_path']
-                
+                    
                 # Update the playlist
                 existing_playlists[playlist_id] = playlist_dict
 
@@ -665,5 +773,4 @@ class DataManager:
         logs = logs[-100:]
         
         with open(log_file, 'w') as f:
-
             json.dump(logs, f, indent=2)

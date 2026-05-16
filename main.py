@@ -18,45 +18,50 @@ from gui import MainWindow
 from config import APP_NAME
 
 
+def get_resource_path(relative_path: str) -> str:
+    """Resolve resource path for both dev and PyInstaller frozen builds."""
+    if getattr(sys, 'frozen', False):
+        base = sys._MEIPASS
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, relative_path)
+
+
 def main():
     """Main entry point."""
-    # Set Windows AppUserModelID FIRST
+    # Must be set before QApplication is created
     if sys.platform == 'win32':
         try:
             import ctypes
-            # Change this ID to something unique each time you test
-            app_id = 'com.magik.spotiup'  # Changed ID
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('com.magik.spotiup')
         except Exception:
             pass
-    
-    # Enable high DPI scaling
+
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
-    
+
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("dayeggpi")
-    
-    # Set style BEFORE icon
     app.setStyle("Fusion")
-    
-    # Set icon
-    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'icon.png')
+
+    # Prefer .ico on Windows for proper taskbar icon
+    icon_file = 'icon.ico' if sys.platform == 'win32' else 'icon.png'
+    icon_path = get_resource_path(os.path.join('assets', icon_file))
+    if not os.path.exists(icon_path):
+        icon_path = get_resource_path(os.path.join('assets', 'icon.png'))
+
     if os.path.exists(icon_path):
         app_icon = QIcon(icon_path)
         app.setWindowIcon(app_icon)
-    
-    # Create and show main window
+
     window = MainWindow()
-    
-    # Set icon on window too
+
     if os.path.exists(icon_path):
         window.setWindowIcon(QIcon(icon_path))
-    
+
     window.show()
-    
     sys.exit(app.exec())
 
 
