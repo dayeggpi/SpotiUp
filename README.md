@@ -34,6 +34,18 @@ python main.py
 
 Then click connect (which should open a browser to login/approve the Spotify App <> API connection). Troubles connecting ? delete .cache file and try again.
 
+### 4. Alternatively : build a standalone exe
+
+
+```
+pip install pyinstaller
+pyinstaller spotiup.spec
+```
+
+This will output in dist/SpotiUp.exe.
+
+
+
 ## ToDo
 
 - [ ] Fix app icon in taskbar
