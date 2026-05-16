@@ -120,6 +120,54 @@ class SelectiveRefreshWorker(QThread):
         self._cancelled = True
 
 
+class DeltaWorker(QThread):
+    """Worker thread for delta (smart incremental) sync."""
+
+    progress = pyqtSignal(str, int, int)
+    finished = pyqtSignal(dict)
+    error = pyqtSignal(str)
+    rate_limited = pyqtSignal(dict)
+
+    def __init__(self, client: SpotifyClient, stored_playlists: Dict[str, Dict],
+                 stored_liked_total: int = -1, fetch_genres: bool = False,
+                 include_spotify_playlists: bool = True, include_collab_playlists: bool = True):
+        super().__init__()
+        self.client = client
+        self.stored_playlists = stored_playlists
+        self.stored_liked_total = stored_liked_total
+        self.fetch_genres = fetch_genres
+        self.include_spotify_playlists = include_spotify_playlists
+        self.include_collab_playlists = include_collab_playlists
+        self._cancelled = False
+
+    def run(self):
+        try:
+            self.client.progress_callback = self._report_progress
+            data = self.client.fetch_delta_data(
+                self.stored_playlists,
+                self.stored_liked_total,
+                self.fetch_genres,
+                self.include_spotify_playlists,
+                self.include_collab_playlists,
+            )
+            if self._cancelled:
+                return
+            if data.get('rate_limited'):
+                self.rate_limited.emit(data)
+            else:
+                self.finished.emit(data)
+        except Exception as e:
+            import traceback
+            self.error.emit(f"{str(e)}\n\n{traceback.format_exc()}")
+
+    def _report_progress(self, message: str, current: int, total: int):
+        if not self._cancelled:
+            self.progress.emit(message, current, total)
+
+    def cancel(self):
+        self._cancelled = True
+
+
 class MainWindow(QMainWindow):
     """Main application window."""
 
@@ -705,25 +753,20 @@ class MainWindow(QMainWindow):
         self.statusbar.showMessage("Backup failed")
     
     def _do_incremental_update(self):
-        """Perform an incremental update."""
+        """Delta sync — only fetch playlists whose snapshot_id or track count changed."""
         if not self.spotify_client.is_authenticated():
-            QMessageBox.warning(
-                self, "Not Connected",
-                "Please connect to Spotify first."
-            )
+            QMessageBox.warning(self, "Not Connected", "Please connect to Spotify first.")
             return
-        
-        # Check for rate limiting
+
         if self.spotify_client.is_rate_limited():
             info = self.spotify_client.get_rate_limit_status()
             QMessageBox.warning(
                 self, "Rate Limited",
                 f"Currently rate limited by Spotify.\n\n"
-                f"Available at: {info['available_at']}\n\n"
-                f"Please try again later."
+                f"Available at: {info['available_at']}\n\nPlease try again later."
             )
             return
-        
+
         existing_data = self.data_manager.load_backup()
         if not existing_data:
             reply = QMessageBox.question(
@@ -734,26 +777,44 @@ class MainWindow(QMainWindow):
             if reply == QMessageBox.StandardButton.Yes:
                 self._do_full_backup()
             return
-        
-        old_snapshots = {}
+
+        # Build stored metadata dict for delta comparison
+        stored_playlists: Dict[str, Dict] = {}
         for p in existing_data.get('playlists', []):
             if isinstance(p, dict):
-                old_snapshots[p.get('playlist_id', '')] = p.get('snapshot_id', '')
+                pid = p.get('playlist_id', '')
+                stored_playlists[pid] = {
+                    'snapshot_id': p.get('snapshot_id', ''),
+                    'total_tracks': p.get('total_tracks', len(p.get('tracks', []))),
+                }
             elif isinstance(p, Playlist):
-                old_snapshots[p.playlist_id] = p.snapshot_id
-        
-        progress_dialog = ProgressDialog(self, "Incremental Update")
-        
-        self._backup_worker = BackupWorker(
+                stored_playlists[p.playlist_id] = {
+                    'snapshot_id': p.snapshot_id,
+                    'total_tracks': p.total_tracks,
+                }
+
+        stored_liked = existing_data.get('liked_songs', {})
+        if isinstance(stored_liked, dict):
+            stored_liked_total = stored_liked.get('total_tracks', len(stored_liked.get('tracks', [])))
+        elif isinstance(stored_liked, LikedSongs):
+            stored_liked_total = stored_liked.total_tracks
+        else:
+            stored_liked_total = -1
+
+        progress_dialog = ProgressDialog(self, "Delta Sync")
+
+        self._backup_worker = DeltaWorker(
             self.spotify_client,
+            stored_playlists,
+            stored_liked_total,
             self._settings.get('fetch_genres', False),
             include_spotify_playlists=True,
-            include_collab_playlists=self._settings.get('include_collab_playlists', True)
+            include_collab_playlists=self._settings.get('include_collab_playlists', True),
         )
-        
+
         self._backup_worker.progress.connect(progress_dialog.update_progress)
         self._backup_worker.finished.connect(
-            lambda data: self._on_update_finished(data, old_snapshots, progress_dialog)
+            lambda data: self._on_delta_finished(data, progress_dialog)
         )
         self._backup_worker.error.connect(
             lambda err: self._on_backup_error(err, progress_dialog)
@@ -761,33 +822,29 @@ class MainWindow(QMainWindow):
         self._backup_worker.rate_limited.connect(
             lambda data: self._on_rate_limited(data, progress_dialog)
         )
-        
+
         progress_dialog.rejected.connect(self._backup_worker.cancel)
-        
+
         self._backup_worker.start()
         progress_dialog.exec()
-    
-    def _on_update_finished(
-        self,
-        data: Dict[str, Any],
-        old_snapshots: Dict[str, str],
-        dialog: ProgressDialog
-    ):
-        """Handle incremental update completion."""
+
+    def _on_delta_finished(self, data: Dict[str, Any], dialog: ProgressDialog):
+        """Handle delta sync completion."""
         dialog.accept()
-        
-        stats = self.data_manager.update_incremental(
-            data.get('playlists', []),
+
+        stats = self.data_manager.apply_delta_update(
+            data.get('changed_playlists', []),
+            data.get('all_current_ids', []),
+            data.get('all_metadata', {}),
             data.get('liked_songs'),
-            old_snapshots
         )
-        
+
         self.playlist_view.load_data()
-        
+
         result_dialog = UpdateResultDialog(self, stats)
         result_dialog.exec()
-        
-        self.statusbar.showMessage("Update complete")
+
+        self.statusbar.showMessage("Delta sync complete")
 
     def _do_selective_refresh(self):
         """Refresh only selected playlists."""

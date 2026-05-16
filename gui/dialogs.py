@@ -187,12 +187,16 @@ class UpdateResultDialog(QDialog):
         if not stats:
             layout.addWidget(QLabel("Update completed."))
         else:
+            unchanged_row = ""
+            if 'playlists_unchanged' in stats:
+                unchanged_row = f"<tr><td><b>Playlists Unchanged (skipped):</b></td><td>{stats['playlists_unchanged']}</td></tr>"
             text = f"""
-            <h3>Incremental Update Results</h3>
+            <h3>Update Results</h3>
             <table>
                 <tr><td><b>Playlists Added:</b></td><td>{stats.get('playlists_added', 0)}</td></tr>
                 <tr><td><b>Playlists Updated:</b></td><td>{stats.get('playlists_updated', 0)}</td></tr>
                 <tr><td><b>Playlists Removed:</b></td><td>{stats.get('playlists_removed', 0)}</td></tr>
+                {unchanged_row}
                 <tr><td><b>Tracks Added:</b></td><td>{stats.get('tracks_added', 0)}</td></tr>
                 <tr><td><b>Tracks Removed:</b></td><td>{stats.get('tracks_removed', 0)}</td></tr>
             </table>
